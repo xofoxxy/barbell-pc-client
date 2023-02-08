@@ -21,19 +21,6 @@ meanGY = 0
 meanGZ = 0
 
 
-def convert_and_adjust(dataset):
-    # TODO: The goal for this function is to take the raw gyro data and convert it to degrees and then keep a constantly
-    # updated value of the yaw, roll, and pitch
-
-    # Take in the most recent entry into the database
-
-    # multiply the raw data by the observation period and then also by some constant (This needs to be found
-    # experimentally)
-
-    # add the converted data to the previous value
-    pass
-
-
 # The purpose of this function is to find the average of a set of data and then simplify the data down to its averages.
 def pull_from_queue(dataset, inputQueue):
     # We need to pull in our means so that whenever we decide to change our calibration data the new entries will
@@ -47,7 +34,7 @@ def pull_from_queue(dataset, inputQueue):
     string = inputQueue.get()
     regexList = message_format.split(string)
     aX, aY, aZ, gX, gY, gZ = [regexList[i] for i in range(1, 7)]
-    dataset.loc[datetime.datetime.now()] = [float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ,
+    dataset.loc[datetime.datetime.now()] = [float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ,  
                                             float(gX) - meanGX, float(gY) - meanGY,
                                             float(gZ) - meanGZ, 0, 0, 0, 0, 0, 0]
     return float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ, float(gX) - meanGX, float(
