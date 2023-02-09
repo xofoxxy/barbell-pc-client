@@ -5,7 +5,6 @@ import pandas as pd
 from scipy.spatial.transform import Rotation
 import matplotlib
 import threading
-import time
 import datetime
 import firebase_admin as firebase
 from firebase_admin import credentials
@@ -13,8 +12,9 @@ from firebase_admin import firestore
 import keyboard
 
 dataInputQueue = multiprocessing.Queue()
+dataInputQueue = multiprocessing.Queue()
 cred_obj = firebase.credentials.Certificate(
-    "/Users/sethleavitt/Desktop/barbarix-app-firebase-adminsdk-qymun-9671e7cdc1.json")
+    r"C:\Users\sethl\PycharmProjects\barbell PC client\barbarix-app-firebase-adminsdk-qymun-9671e7cdc1.json")
 default_app = firebase.initialize_app(cred_obj)
 firebase_db = firestore.client()
 firebase_db_ref = firebase_db.collection(u'barbells').document(u"barbell4")
@@ -22,9 +22,6 @@ firebase_db_ref = firebase_db.collection(u'barbells').document(u"barbell4")
 meanAX = 0
 meanAY = 0
 meanAZ = 0
-meanGX = 0
-meanGY = 0
-meanGZ = 0
 meanH = 0
 meanP = 0
 meanR = 0
@@ -55,9 +52,10 @@ def pull_from_queue(dataset, inputQueue):
     global weightIDs
     global weight
     string = inputQueue.get()
+    string = string.replace('(', '').replace(')', '')
     stringList = string.split(',')
 
-    aX, aY, aZ, h, p, r, sC, gC, aC, mC = [stringList[i] for i in range(0, 11)]
+    aX, aY, aZ, h, p, r, sC, gC, aC, mC = [stringList[i] for i in range(0, 10)]
 
     # Here is where we're going to handle for the weight IDs. If more than 10 parameters are passed, we know that there
     # are IDs that need to be handled.
@@ -69,9 +67,10 @@ def pull_from_queue(dataset, inputQueue):
 
     # TODO: we need to actually make the script handle for the IDs now that we have them collected. In order to do that
 
-    dataset.loc[datetime.datetime.now()] = [aX - meanAX, aY - meanAY, aZ - meanAZ, h - meanH, p - meanP,
-                                            r - meanR, sC, gC, aC, mC, weight]
-    return aX - meanAX, aY - meanAY, aZ - meanAZ, h - meanH, p - meanP, r - meanR, sC, gC, aC, mC, weight
+    dataset.loc[datetime.datetime.now()] = [float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ, float(h) - meanH,
+                                            float(p) - meanP,
+                                            float(r) - meanR, int(sC), int(gC), int(aC), int(mC), float(weight)]
+    return float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ, float(h) - meanH, float(p) - meanP, float(r) - meanR, int(sC), int(gC), int(aC), int(mC), float(weight)
 
 
 # TODO: finish all of the score calculations
@@ -87,7 +86,6 @@ def calculate_stability(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight):
     return 'NA'
 
 
-
 # The purpose of this portion is to take in the rotation and adjust the accelerometer data according to the gyro data
 
 def findAverages(dataset, inputQueue, sampleSize):
@@ -100,10 +98,10 @@ def findAverages(dataset, inputQueue, sampleSize):
     meanAX = dataset["aX"].mean()
     meanAY = dataset["aY"].mean()
     meanAZ = dataset["aZ"].mean()
-    meanGX = dataset["gX"].mean()
-    meanGY = dataset["gY"].mean()
-    meanGZ = dataset["gZ"].mean()
-    print(meanAX, meanAY, meanAZ, meanGX, meanGY, meanGZ)
+    meanH = dataset["heading"].mean()
+    meanP = dataset["pitch"].mean()
+    meanR = dataset["roll"].mean()
+    print(meanAX, meanAY, meanAZ, meanH, meanP, meanR)
 
 
 # Thread 1 is going to be used solely for listening in onto the MQTT channel and putting data into the queue.
@@ -125,7 +123,7 @@ def thread_2_processing(inputQueue, outboxQueue):
     movement_database = pd.DataFrame(columns=['aX', 'aY', 'aZ', 'heading', 'pitch', 'roll', 'systemStatus',
                                               'gyroStatus', 'accelStatus', 'magStatus', 'weight'])
 
-    findAverages(movement_database, inputQueue, 30)
+    #findAverages(movement_database, inputQueue, 30)
 
     # This should empty the queue so that we can start fresh now that we have our averages
     while not inputQueue.empty():
@@ -143,12 +141,10 @@ def thread_2_processing(inputQueue, outboxQueue):
             stability = calculate_stability(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight)
 
             # Todo: we need to make it so that scores are only updated and put into the queue once a rep has been finished
-            if keyboard.is_pressed('a'):
-                scores = [effort, momentum, stability, sC, gC, aC, mC]
-                outboxQueue.put(scores)
-
-
-
+        if keyboard.is_pressed('a'):
+            print("A key has been pressed!")
+            scores = [effort, momentum, stability, sC, gC, aC, mC]
+            outboxQueue.put(scores)
 
 
 # Thread 3 will be designated to handling pushing things to the website and making sure that everything on the website
@@ -161,15 +157,20 @@ def thread_3_firestore(inbox, outbox):
         if not outbox.empty():
             scores = outbox.get()
 
-            repArray = [{'effort': scores[0], 'momentum': scores[1], 'time': datetime.datetime.now(),'type': scores[2]}]
-            firebase_db_ref.set({
+            print("Assembling array!")
+
+            repArray = [
+                {'effort': scores[0], 'momentum': scores[1], 'time': datetime.datetime.now(), 'type': scores[2]}]
+            firebase_format = {
+                'name': 'barbell4',
                 'active': scores[3],
                 'gyroscope': scores[4],
                 'accelerometer': scores[5],
                 'magnetometer': scores[6],
                 'reps': firestore.ArrayUnion(repArray)
-        })
-
+            }
+            firebase_db_ref.set(firebase_format, merge=True)
+            print("Array has been pushed!")
 
     pass
 
@@ -185,4 +186,5 @@ thread2 = threading.Thread(target=thread_2_processing, args=(dataInputQueue, out
 thread3 = threading.Thread(target=thread_3_firestore, args=(inboxQueue, outboxQueue,))
 thread1.start()
 thread2.start()
+thread3.start()
 # this is a change
