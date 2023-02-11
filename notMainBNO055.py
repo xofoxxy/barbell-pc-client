@@ -52,9 +52,9 @@ while connected == False:
 
 def IMUValues():
     ax, ay, az = imu.accel() # accelerometer data
-    h, r, p = imu.euler() # Heading, Roll, Pitch
+    w, x, y, z = imu.quaternion() # Heading, Roll, Pitch
     sc, gc, ac, mc = imu.cal_status() # Calibration statuses
-    return ax, ay, az, h, r, p, sc, gc, ac, mc
+    return ax, ay, az, w, x, y, z, sc, gc, ac, mc
 
 
 while True:
