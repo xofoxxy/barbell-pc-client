@@ -1,9 +1,12 @@
+import matplotlib;
+
+matplotlib.use("TkAgg")
 import multiprocessing
 import numpy as np
-import regex
 import pandas as pd
-from scipy.spatial.transform import Rotation
-import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from matplotlib import style
 import threading
 import datetime
 import firebase_admin as firebase
@@ -67,10 +70,13 @@ def pull_from_queue(dataset, inputQueue):
 
     # TODO: we need to actually make the script handle for the IDs now that we have them collected. In order to do that
 
-    dataset.loc[datetime.datetime.now()] = [float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ, float(h) - meanH,
+    dataset.loc[datetime.datetime.now()] = [float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ,
+                                            float(h) - meanH,
                                             float(p) - meanP,
                                             float(r) - meanR, int(sC), int(gC), int(aC), int(mC), float(weight)]
-    return float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ, float(h) - meanH, float(p) - meanP, float(r) - meanR, int(sC), int(gC), int(aC), int(mC), float(weight)
+    return float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ, float(h) - meanH, float(p) - meanP, float(
+        r) - meanR, int(sC), int(gC), int(aC), int(mC), float(weight)
+
 
 
 # TODO: finish all of the score calculations
@@ -85,8 +91,6 @@ def calculate_effort(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight):
 def calculate_stability(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight):
     return 'NA'
 
-
-# The purpose of this portion is to take in the rotation and adjust the accelerometer data according to the gyro data
 
 def findAverages(dataset, inputQueue, sampleSize):
     global meanAX, meanAY, meanAZ, meanGX, meanGY, meanGZ
@@ -112,38 +116,77 @@ def thread_1_startMQTT(inputQueue):
     mqtt.run(inputQueue)
 
 
+def liveGraph(i, x1, y1, y2, y3, database1, database2):
+    # Here we pull in all of our variables from the outside
+
+    # here we append a new piece of data from the dataframe
+    try:
+        y1.append(database1['aX'][-1])
+        y2.append(database1['aY'][-1])
+        y3.append(database1['aZ'][-1])
+
+        # x1 needs to be appended to after the others since the others will raise an error until the other threads
+        # have begun, and we need the lists to have the same dimensions
+        x1.append(datetime.datetime.now().strftime('%M:%S.%f'))
+
+    except:
+        return None
+
+    x1 = x1[-20:]
+    y1 = y1[-20:]
+    y2 = y2[-20:]
+    y2 = y3[-20:]
+
+    ax1.clear()
+    ax2.clear()
+    ax3.clear()
+    ax1.plot(xs, ys1)
+    ax2.plot(xs, ys2)
+    ax3.plot(xs, ys3)
+
+
+    # Format plot
+    plt.xticks(rotation=45, ha='right')
+    plt.subplots_adjust(bottom=0.30)
+    ax1.set_title('X Acceleration')
+    ax2.set_title('Y Acceleration')
+    ax3.set_title('Z Acceleration')
+
+
 # Thread 2 is going to be used for doing the initial processing of the data
 # The first parameter is the queue that we want the data to flow out of, or in other words the data
 # that we want to be processing.
 def thread_2_processing(inputQueue, outboxQueue):
-    global weight
+    global weight, fig
     print("Thread 2 has begun")
 
-    # First we declare all of the things that we're going to use frequently in the main processing loop
-    movement_database = pd.DataFrame(columns=['aX', 'aY', 'aZ', 'heading', 'pitch', 'roll', 'systemStatus',
-                                              'gyroStatus', 'accelStatus', 'magStatus', 'weight'])
-
-    #findAverages(movement_database, inputQueue, 30)
+    # findAverages(movement_database, inputQueue, 30)
 
     # This should empty the queue so that we can start fresh now that we have our averages
-    while not inputQueue.empty():
-        inputQueue.get()
-        print(inputQueue.qsize())
+    # while not inputQueue.empty():
+    #     inputQueue.get()
+    #     print(inputQueue.qsize())
 
     print("Main processing Loop has begun!")
     while True:
-        # Todo: Once we have all the raw data, that stuff needs to be put into the queue to be sent to the server
 
         if not inputQueue.empty():
             aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight = pull_from_queue(movement_database, inputQueue)
-            momentum = calculate_momentum(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight)
-            effort = calculate_effort(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight)
-            stability = calculate_stability(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight)
+            # Todo: Make the live graph off of this data
 
-            # Todo: we need to make it so that scores are only updated and put into the queue once a rep has been finished
-        if keyboard.is_pressed('a'):
-            print("A key has been pressed!")
-            scores = [effort, momentum, stability, sC, gC, aC, mC]
+            scores = []
+            # Right now the keyboard interaction simulates a rep happening Todo: Make this reps instead of the A key
+            #  we want the actual scores to be 0 unless a rep has happened so that we have some way for thread 3 to
+            #  detect new reps
+            if keyboard.is_pressed('a'):
+                print("A key has been pressed!")
+                momentum = calculate_momentum(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight)
+                effort = calculate_effort(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight)
+                stability = calculate_stability(aX, aY, aZ, h, p, r, sC, gC, aC, mC, weight)
+                scores = [effort, momentum, stability, sC, gC, aC, mC]
+            else:
+                scores = [0, 0, 0, sC, gC, aC, mC]
+
             outboxQueue.put(scores)
 
 
@@ -157,22 +200,29 @@ def thread_3_firestore(inbox, outbox):
         if not outbox.empty():
             scores = outbox.get()
 
-            print("Assembling array!")
+            if scores[0] != 0:
+                print("Assembling array!")
 
-            repArray = [
-                {'effort': scores[0], 'momentum': scores[1], 'time': datetime.datetime.now(), 'type': scores[2]}]
-            firebase_format = {
-                'name': 'barbell4',
-                'active': scores[3],
-                'gyroscope': scores[4],
-                'accelerometer': scores[5],
-                'magnetometer': scores[6],
-                'reps': firestore.ArrayUnion(repArray)
-            }
-            firebase_db_ref.set(firebase_format, merge=True)
-            print("Array has been pushed!")
+                repArray = [
+                    {'effort': scores[0], 'momentum': scores[1], 'time': datetime.datetime.now(), 'type': scores[2]}]
+                firebase_format = {
+                    'name': 'barbell4',
+                    'active': scores[3],
+                    'gyroscope': scores[4],
+                    'accelerometer': scores[5],
+                    'magnetometer': scores[6],
+                    'reps': firestore.ArrayUnion(repArray)
+                }
+                firebase_db_ref.set(firebase_format, merge=True)
+                print("Array has been pushed!")
 
     pass
+
+
+# First we declare all of the things that we're going to use frequently in the main processing loop, and it's helper
+# functions
+movement_database_left = pd.DataFrame(columns=['aX', 'aY', 'aZ', 'heading', 'pitch', 'roll', 'systemStatus',
+                                          'gyroStatus', 'accelStatus', 'magStatus', 'weight'])
 
 
 # This queue will be used to have multiple threads running at once and will store the messages coming from MQTT
@@ -187,4 +237,21 @@ thread3 = threading.Thread(target=thread_3_firestore, args=(inboxQueue, outboxQu
 thread1.start()
 thread2.start()
 thread3.start()
-# this is a change
+
+# The animation stuff needs to be running on the main thread and so we'll start that up once the others have
+# begun. this is all stuff that needs to be initialized so that the live graphing works and looks good here we change
+# the style
+style.use("fivethirtyeight")
+
+# here we create the figure object
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex=True, sharey=False)
+
+# Here we create the lists that the graph will be pulling from
+xs = []
+ys1 = []
+ys2 = []
+ys3 = []
+
+# this animation call has to be running on the main thread because matplotlib isn't threadsafe.
+ani = animation.FuncAnimation(fig, liveGraph, fargs=(xs, ys1, ys2, ys3, movement_database_left), interval=50)
+plt.show()
