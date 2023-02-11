@@ -4,6 +4,8 @@ from bno055 import *
 import network
 from umqtt.simple import MQTTClient
 
+LED = machine.Pin("LED", machine.Pin.OUT)
+LED.on()
 print("Imports Successful")
 # Pyboard hardware I2C
 i2c = machine.I2C(0,scl=machine.Pin(13), sda=machine.Pin(12))
@@ -61,3 +63,4 @@ while True:
     time.sleep(1)
     print(IMUValues())
     client.publish(topic, str(IMUValues()))
+    LED.toggle()
