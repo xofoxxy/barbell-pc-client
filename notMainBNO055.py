@@ -9,6 +9,7 @@ LED.on()
 print("Imports Successful")
 # Pyboard hardware I2C
 i2c = machine.I2C(0,scl=machine.Pin(13), sda=machine.Pin(12))
+print(i2c)
 imu = BNO055(i2c)
 calibrated = False
 # First step that we need to do now that we have all of the i2c set up is to initialize the mqtt transferring
@@ -60,7 +61,7 @@ def IMUValues():
 
 
 while True:
-    time.sleep(1)
+    time.sleep(0.25)
     print(IMUValues())
     client.publish(topic, str(IMUValues()))
     LED.toggle()
