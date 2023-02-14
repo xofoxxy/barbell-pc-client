@@ -27,7 +27,7 @@ firebase_db_ref = firebase_db.collection(u'barbells').document(u"barbell4")
 
 meanAX = 0
 meanAY = 0
-meanAZ = 0
+meanAZ = 9.7823
 meanW = 0
 meanX = 0
 meanY = 0
@@ -43,9 +43,38 @@ def calculateWeight(weightList):
     return 45
 
 
-# Because we know that the mqtt data is going to be coming in the format of:
-# Accelerometer data (X,Y,Z), Euler Angles (Heading, Pitch, Roll), and then calibration data (System, Gyroscope, Accelerometer
-# Magnetometer) followed by the IDs of the weights that it's detected, we need to make sure that the PC client expects that.
+# Because we know that the mqtt data is going to be coming in the format of: Accelerometer data (X,Y,Z), Euler Angles
+# (Heading, Pitch, Roll), and then calibration data (System, Gyroscope, Accelerometer Magnetometer) followed by the
+# IDs of the weights that it's detected, we need to make sure that the PC client expects that.
+
+
+def estimateZVelocity(dataset):
+    try:
+        recentSlope = ((dataset["estimatedVelocity"][-1]-dataset["estimatedVelocity"][-5])/(dataset.index[-1]-dataset.index[-5]).microseconds/100000)
+        oldSlope = ((dataset["estimatedVelocity"][-10]-dataset["estimatedVelocity"][-15])/(dataset.index[-10]-dataset.index[-15]).microseconds/100000)
+        previousZVelocity = dataset["estimatedVelocity"][-1]
+        if -0.01 < recentSlope - oldSlope < 0.01:
+            previousZVelocity = 0
+        if -0.01 < dataset["aZ"][-1] < 0.01:
+            changeInVelocity = 0
+        else: changeInVelocity = dataset["aZ"][-1] * (dataset.index[-1] - dataset.index[-2]).microseconds / 100000
+        # 1000000 changeInVelocity = trailing_average(dataset, "aZ", 0, 5) * (dataset.index[-1] - dataset.index[
+        # -2]).microseconds/1000000
+    except IndexError:
+        previousZVelocity = 0
+        changeInVelocity = 0
+    currentZVelocity = previousZVelocity + changeInVelocity
+    print(currentZVelocity)
+    return currentZVelocity
+
+
+def resetZVelocity(dataset):
+    try:
+        dataset["estimatedVelocity"][-1] = 0
+    except IndexError:
+        pass
+    pass
+
 
 # This function does the following:
 # First, it pulls in the data from the queue
@@ -82,9 +111,10 @@ def pull_from_queue(dataset, inputQueue):
                                             float(w) - meanW,
                                             float(x) - meanX,
                                             float(y) - meanY,
-                                            float(z) - meanZ, int(sC), int(gC), int(aC), int(mC), float(weight)]
+                                            float(z) - meanZ, int(sC), int(gC), int(aC), int(mC), float(weight),
+                                            estimateZVelocity(dataset)]
     return float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ, float(w) - meanW, float(x) - meanX, float(
-        y) - meanY, float(z) - meanZ, int(sC), int(gC), int(aC), int(mC), float(weight)
+        y) - meanY, float(z) - meanZ, int(sC), int(gC), int(aC), int(mC), float(weight), estimateZVelocity(dataset)
 
 
 # This function will take the amount that the sensor has rotated and rotate its results by that same amount so that
@@ -111,26 +141,34 @@ def findAverages(dataset, inputQueue, sampleSize):
     global meanAX, meanAY, meanAZ, meanGX, meanGY, meanGZ
 
     while len(dataset) < sampleSize:
+        resetZVelocity(dataset)
         pull_from_queue(dataset, inputQueue)
     print(f"{sampleSize} Samples have been collected")
     print("These are the averages: \n")
     meanAX = dataset["aX"].mean()
     meanAY = dataset["aY"].mean()
     meanAZ = dataset["aZ"].mean()
-    meanW = dataset['quatW'].mean()
-    meanX = dataset["quatX"].mean()
-    meanY = dataset["quatY"].mean()
-    meanZ = dataset["quatZ"].mean()
-    print(meanAX, meanAY, meanAZ, meanW, meanX, meanY, meanZ)
+    print(meanAX, meanAY, meanAZ)
 
 
-def trailing_average(database, index, n):
+def trailing_average(database, index, start, n):
     sum = 0
-    for i in range(0, n):
-        sum += database[index][-i]
+    alpha = 0.8
+    for i in range(1, n):
+        sum += database[index][start-i]
     pass
-    return sum/n
+    return sum / n
 
+
+def has_left_bounds(database, start):
+    # If its passed the negative bounds
+    # it returns -1
+    # if its passed the positive bounds
+    # it returns 1
+
+    # Later we can check to see if it's passed both bound within a recentish span
+
+    pass
 
 # Thread 1 is going to be used solely for listening in onto the MQTT channel and putting data into the queue.
 # The first parameter is the queue that we want the data to flow into.
@@ -144,9 +182,10 @@ def liveGraph(i, x1, y1, y2, y3, y4, y5, y6, database1, database2):
     # here we attempt to assign all the left-side graph values
 
     try:
-        y1.append(trailing_average(database1, "aX", 5))
-        y2.append(trailing_average(database1, "aY", 5))
-        y3.append(trailing_average(database1, "aZ", 5))
+        # y1.append(trailing_average(database1, "aX", 0, 5))
+        # y2.append(trailing_average(database1, "aY", 0, 5))
+        y3.append(trailing_average(database1, "aZ", 0, 5))
+        y4.append(database1["estimatedVelocity"][-1])
         # x1 needs to be appended to after the others since the others will raise an error until the other threads
         # have begun, and we need the lists to have the same dimensions
         x1.append(datetime.datetime.now())
@@ -167,12 +206,14 @@ def liveGraph(i, x1, y1, y2, y3, y4, y5, y6, database1, database2):
     y2 = y2[-5:]
     y3 = y3[-5:]
 
-    ax1.clear()
-    ax2.clear()
+    # ax1.clear()
+    # ax2.clear()
     ax3.clear()
-    ax1.plot(xs, ys1)
-    ax2.plot(xs, ys2)
+    ax4.clear()
+    # ax1.plot(xs, ys1)
+    # ax2.plot(xs, ys2)
     ax3.plot(xs, ys3)
+    ax4.plot(xs, ys4)
     # ax1.plot(xs, ys4)
     # ax2.plot(xs, ys5)
     # ax3.plot(xs, ys6)
@@ -191,20 +232,30 @@ def liveGraph(i, x1, y1, y2, y3, y4, y5, y6, database1, database2):
 def thread_2_processing(inputQueue, outboxQueue):
     global weight, fig
     print("Thread 2 has begun")
+    # ready_to_go = False
+    # while not ready_to_go:
+    #     string = inputQueue.get()
+    #     string = string.replace('(', '').replace(')', '')
+    #     stringList = string.split(',')
+    #     aX, aY, aZ, w, x, y, z, sC, gC, aC, mC = [stringList[i] for i in range(0, 11)]
+    #
+    #     if int(sC) == 3:
+    #         ready_to_go = True
+    #     pass
 
-    # findAverages(movement_database, inputQueue, 30)
+    #findAverages(movement_database_left, inputQueue, 100)
 
     # This should empty the queue so that we can start fresh now that we have our averages
     # while not inputQueue.empty():
     #     inputQueue.get()
     #     print(inputQueue.qsize())
-
+    resetZVelocity(movement_database_left)
     print("Main processing Loop has begun!")
     while True:
 
         if not inputQueue.empty():
-            aX, aY, aZ, w, x, y, z, sC, gC, aC, mC, weight = pull_from_queue(movement_database_left, inputQueue)
-
+            aX, aY, aZ, w, x, y, z, sC, gC, aC, mC, weight, estimatedVelocity = pull_from_queue(movement_database_left,
+                                                                                                inputQueue)
             scores = []
             # Right now the keyboard interaction simulates a rep happening Todo: Make this reps instead of the A key
             #  we want the actual scores to be 0 unless a rep has happened so that we have some way for thread 3 to
@@ -253,7 +304,7 @@ def thread_3_firestore(inbox, outbox):
 # First we declare all of the things that we're going to use frequently in the main processing loop, and it's helper
 # functions
 movement_database_left = pd.DataFrame(columns=['aX', 'aY', 'aZ', 'quatW', 'quatX', 'quatY', 'quatZ', 'systemStatus',
-                                               'gyroStatus', 'accelStatus', 'magStatus', 'weight'])
+                                               'gyroStatus', 'accelStatus', 'magStatus', 'weight', 'estimatedVelocity'])
 movement_database_right = pd.DataFrame(columns=['aX', 'aY', 'aZ', 'quatW', 'quatX', 'quatY', 'quatZ', 'systemStatus',
                                                 'gyroStatus', 'accelStatus', 'magStatus', 'weight'])
 
@@ -276,7 +327,7 @@ thread3.start()
 style.use("fivethirtyeight")
 
 # here we create the figure object
-fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex=True, sharey=False)
+fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, sharex=True, sharey=False)
 
 # Here we create the lists that the graph will be pulling from
 xs = []
@@ -288,6 +339,7 @@ ys5 = []
 ys6 = []
 
 # this animation call has to be running on the main thread because matplotlib isn't threadsafe.
+
 ani = animation.FuncAnimation(fig, liveGraph, frames=100,
                               fargs=(xs, ys1, ys2, ys3, ys4, ys5, ys6, movement_database_left, movement_database_right),
                               interval=50)
