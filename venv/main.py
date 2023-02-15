@@ -27,7 +27,7 @@ firebase_db_ref = firebase_db.collection(u'barbells').document(u"barbell4")
 
 meanAX = 0
 meanAY = 0
-meanAZ = 9.7823
+meanAZ = 9.59
 meanW = 0
 meanX = 0
 meanY = 0
@@ -50,21 +50,24 @@ def calculateWeight(weightList):
 
 def estimateZVelocity(dataset):
     try:
-        recentSlope = ((dataset["estimatedVelocity"][-1]-dataset["estimatedVelocity"][-5])/(dataset.index[-1]-dataset.index[-5]).microseconds/100000)
-        oldSlope = ((dataset["estimatedVelocity"][-10]-dataset["estimatedVelocity"][-15])/(dataset.index[-10]-dataset.index[-15]).microseconds/100000)
+        recentSlope = ((dataset["estimatedVelocity"][-1] - dataset["estimatedVelocity"][-5]) / (
+                dataset.index[-1] - dataset.index[-5]).microseconds / 100000)
+        oldSlope = ((dataset["estimatedVelocity"][-10] - dataset["estimatedVelocity"][-15]) / (
+                dataset.index[-10] - dataset.index[-15]).microseconds / 100000)
         previousZVelocity = dataset["estimatedVelocity"][-1]
         if -0.01 < recentSlope - oldSlope < 0.01:
             previousZVelocity = 0
         if -0.01 < dataset["aZ"][-1] < 0.01:
             changeInVelocity = 0
-        else: changeInVelocity = dataset["aZ"][-1] * (dataset.index[-1] - dataset.index[-2]).microseconds / 100000
+        else:
+            changeInVelocity = dataset["aZ"][-1] * (dataset.index[-1] - dataset.index[-2]).microseconds / 100000
         # 1000000 changeInVelocity = trailing_average(dataset, "aZ", 0, 5) * (dataset.index[-1] - dataset.index[
         # -2]).microseconds/1000000
     except IndexError:
         previousZVelocity = 0
         changeInVelocity = 0
     currentZVelocity = previousZVelocity + changeInVelocity
-    print(currentZVelocity)
+    # print(currentZVelocity)
     return currentZVelocity
 
 
@@ -94,7 +97,6 @@ def pull_from_queue(dataset, inputQueue):
     aX, aY, aZ, w, x, y, z, sC, gC, aC, mC = [stringList[i] for i in range(0, 11)]
     if sC == 0 or gC == 0 or aC == 0 or mC == 0:
         return
-
     # This function will adjust the values for the
     aX, aY, aZ = helperFunctions.adjust_for_spin(aX, aY, aZ, w, x, y, z)
     # Here is where we're going to handle for the weight IDs. If more than 10 parameters are passed, we know that there
@@ -106,13 +108,22 @@ def pull_from_queue(dataset, inputQueue):
         weight = calculateWeight(weightIDs)
 
     # TODO: we need to actually make the script handle for the IDs now that we have them collected. In order to do that
-
-    dataset.loc[datetime.datetime.now()] = [float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ,
-                                            float(w) - meanW,
-                                            float(x) - meanX,
-                                            float(y) - meanY,
-                                            float(z) - meanZ, int(sC), int(gC), int(aC), int(mC), float(weight),
-                                            estimateZVelocity(dataset)]
+    try:
+        dataset.loc[datetime.datetime.now()] = [float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ,
+                                                float(w) - meanW,
+                                                float(x) - meanX,
+                                                float(y) - meanY,
+                                                float(z) - meanZ, int(sC), int(gC), int(aC), int(mC), float(weight),
+                                                estimateZVelocity(dataset), dataset["accelState"][-1],
+                                                dataset["repState"][-1], dataset["repStart"][-1], dataset["repEnd"][-1]]
+    except IndexError:
+        dataset.loc[datetime.datetime.now()] = [float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ,
+                                                float(w) - meanW,
+                                                float(x) - meanX,
+                                                float(y) - meanY,
+                                                float(z) - meanZ, int(sC), int(gC), int(aC), int(mC), float(weight),
+                                                estimateZVelocity(dataset), 0, 0, 0, 0]
+    checkState(dataset)
     return float(aX) - meanAX, float(aY) - meanAY, float(aZ) - meanAZ, float(w) - meanW, float(x) - meanX, float(
         y) - meanY, float(z) - meanZ, int(sC), int(gC), int(aC), int(mC), float(weight), estimateZVelocity(dataset)
 
@@ -125,16 +136,16 @@ def pull_from_queue(dataset, inputQueue):
 
 
 # TODO: finish all of the score calculations
-def calculate_momentum(aX, aY, aZ, w, x, y, z, sC, gC, aC, mC, weight):
-    return 'NA'
+def calculate_momentum(database):
+    return 1
 
 
-def calculate_effort(aX, aY, aZ, w, x, y, z, sC, gC, aC, mC, weight):
-    return 'NA'
+def calculate_effort(database):
+    return 1
 
 
-def calculate_stability(aX, aY, aZ, w, x, y, z, sC, gC, aC, mC, weight):
-    return 'NA'
+def calculate_stability(database):
+    return 1
 
 
 def findAverages(dataset, inputQueue, sampleSize):
@@ -154,21 +165,68 @@ def findAverages(dataset, inputQueue, sampleSize):
 def trailing_average(database, index, start, n):
     sum = 0
     alpha = 0.8
+    totalMass = 0
     for i in range(1, n):
-        sum += database[index][start-i]
+        try:
+            sum += database[index][start - i] * (alpha ** (n - 1))
+            totalMass += alpha ** (n - 1)
+        except IndexError:
+            pass
     pass
-    return sum / n
+    try:
+        return sum / totalMass
+    except ZeroDivisionError:
+        return
 
 
-def has_left_bounds(database, start):
-    # If its passed the negative bounds
-    # it returns -1
-    # if its passed the positive bounds
-    # it returns 1
+def checkState(database):
+    if len(database.index) >= 300:
+        negativeBound = -4
+        positiveBound = 4
+        accelChangeWindow = 5
+        recentAcceleration = trailing_average(database, "aZ", 0, 5)
+        # If it passed the negative bounds
+        # it sets the acceleration state to negative
+        if recentAcceleration < negativeBound:
+            database["accelState"][-1] = -1
+            # if accelerationState started as positive and became negative, rep state becomes positive
+            try:
+                if database["accelState"][-accelChangeWindow] == 1:
+                    print("Entering positive Rep State")
+                    database["repState"][-1] = 1
+            except IndexError:
+                pass
 
-    # Later we can check to see if it's passed both bound within a recentish span
+        # if it passed the positive bounds
+        # it sets the acceleration state to positive
+        if recentAcceleration > positiveBound:
+            database["accelState"][-1] = 1
+            # if accelerationState started as negative and became positive, rep state become negative
+            try:
+                if database["accelState"][-accelChangeWindow] == -1:
+                    print("Entering Negative Rep State")
+                    database["repState"][-1] = -1
+            except IndexError:
+                pass
 
-    pass
+        currentTime = database.index[-1]
+        currentState = database["repState"][-1]
+        # if rep state changes from positive to negative or negative to positive, we know that 1 full rep has occurred
+        # and so we should increase the number of reps that our database has.
+        if database["repState"][-1] != 0 and database["repState"][-1] == (-1) * database["repState"][-2]:
+            if database["repStart"][-1] == database["repEnd"][-1]:
+                database["repStart"][-1] = database["repStart"][-2] + 1
+                print(database["repStart"][-1])
+            elif database["repStart"][-1] > database["repEnd"][-1]:
+                database["repEnd"][-1] = database["repStart"][-1]
+            database["repState"].replace([-1, 1], 0)
+            database["accelState"].replace([-1, 1], 0)
+        # if nothing has happened to the acceleration state in the past second, it resets the state to 0
+        # if nothing has happened to the rep state in the past 4 seconds, it resets the rep state to zero
+        # we can check if nothing has happened by adding up the states of all the past 100 rows and if the sum = 100 or -100
+        # then nothing has happened.
+
+
 
 # Thread 1 is going to be used solely for listening in onto the MQTT channel and putting data into the queue.
 # The first parameter is the queue that we want the data to flow into.
@@ -184,8 +242,8 @@ def liveGraph(i, x1, y1, y2, y3, y4, y5, y6, database1, database2):
     try:
         # y1.append(trailing_average(database1, "aX", 0, 5))
         # y2.append(trailing_average(database1, "aY", 0, 5))
-        y3.append(trailing_average(database1, "aZ", 0, 5))
         y4.append(database1["estimatedVelocity"][-1])
+        y3.append(trailing_average(database1, "aZ", 0, 5))
         # x1 needs to be appended to after the others since the others will raise an error until the other threads
         # have begun, and we need the lists to have the same dimensions
         x1.append(datetime.datetime.now())
@@ -231,6 +289,7 @@ def liveGraph(i, x1, y1, y2, y3, y4, y5, y6, database1, database2):
 # that we want to be processing.
 def thread_2_processing(inputQueue, outboxQueue):
     global weight, fig
+    currentReps = 0
     print("Thread 2 has begun")
     # ready_to_go = False
     # while not ready_to_go:
@@ -243,7 +302,7 @@ def thread_2_processing(inputQueue, outboxQueue):
     #         ready_to_go = True
     #     pass
 
-    #findAverages(movement_database_left, inputQueue, 100)
+    # findAverages(movement_database_left, inputQueue, 100)
 
     # This should empty the queue so that we can start fresh now that we have our averages
     # while not inputQueue.empty():
@@ -260,16 +319,16 @@ def thread_2_processing(inputQueue, outboxQueue):
             # Right now the keyboard interaction simulates a rep happening Todo: Make this reps instead of the A key
             #  we want the actual scores to be 0 unless a rep has happened so that we have some way for thread 3 to
             #  detect new reps
-            if keyboard.is_pressed('a'):
-                print("A key has been pressed!")
-                momentum = calculate_momentum(aX, aY, aZ, w, x, y, z, sC, gC, aC, mC, weight)
-                effort = calculate_effort(aX, aY, aZ, w, x, y, z, sC, gC, aC, mC, weight)
-                stability = calculate_stability(aX, aY, aZ, w, x, y, z, sC, gC, aC, mC, weight)
+            if currentReps < movement_database_left["repEnd"][-1]:
+                currentReps = movement_database_left["repEnd"][-1]
+                print("A new Rep has occurred!")
+                momentum = calculate_momentum(movement_database_left)
+                effort = calculate_effort(movement_database_left)
+                stability = calculate_stability(movement_database_left)
                 scores = [effort, momentum, stability, sC, gC, aC, mC]
+                outboxQueue.put(scores)
             else:
                 scores = [0, 0, 0, sC, gC, aC, mC]
-
-            outboxQueue.put(scores)
 
 
 # Thread 3 will be designated to handling pushing things to the website and making sure that everything on the website
@@ -282,21 +341,22 @@ def thread_3_firestore(inbox, outbox):
         if not outbox.empty():
             scores = outbox.get()
 
-            if scores[0] != 0:
-                print("Assembling array!")
+            print("Assembling array!")
 
-                repArray = [
-                    {'effort': scores[0], 'momentum': scores[1], 'time': datetime.datetime.now(), 'type': scores[2]}]
-                firebase_format = {
-                    'name': 'barbell4',
-                    'active': scores[3],
-                    'gyroscope': scores[4],
-                    'accelerometer': scores[5],
-                    'magnetometer': scores[6],
-                    'reps': firestore.ArrayUnion(repArray)
-                }
-                firebase_db_ref.set(firebase_format, merge=True)
-                print("Array has been pushed!")
+            repArray = [
+                {'effort': scores[0], 'momentum': scores[1], 'time': datetime.datetime.now().hour +
+                                                                     datetime.datetime.now().minute,
+                 'type': scores[2]}]
+            firebase_format = {
+                'name': 'barbell4',
+                'active': scores[3],
+                'gyroscope': scores[4],
+                'accelerometer': scores[5],
+                'magnetometer': scores[6],
+                'reps': firestore.ArrayUnion(repArray)
+            }
+            firebase_db_ref.set(firebase_format, merge=True)
+            print("Array has been pushed!")
 
     pass
 
@@ -304,7 +364,8 @@ def thread_3_firestore(inbox, outbox):
 # First we declare all of the things that we're going to use frequently in the main processing loop, and it's helper
 # functions
 movement_database_left = pd.DataFrame(columns=['aX', 'aY', 'aZ', 'quatW', 'quatX', 'quatY', 'quatZ', 'systemStatus',
-                                               'gyroStatus', 'accelStatus', 'magStatus', 'weight', 'estimatedVelocity'])
+                                               'gyroStatus', 'accelStatus', 'magStatus', 'weight', 'estimatedVelocity',
+                                               "accelState", "repState", "repStart", "repEnd"])
 movement_database_right = pd.DataFrame(columns=['aX', 'aY', 'aZ', 'quatW', 'quatX', 'quatY', 'quatZ', 'systemStatus',
                                                 'gyroStatus', 'accelStatus', 'magStatus', 'weight'])
 
